@@ -7,9 +7,9 @@ from pydantic import BaseModel
 from sqlalchemy import func, insert, select
 from sqlalchemy.orm import Session
 
-from app.services.database import Base, engine
+from app.services.database import engine
 
-Item = Base.classes["items"]
+from ..models import Items
 
 router = APIRouter(prefix="/items", tags=["items"])
 
@@ -54,15 +54,15 @@ def list_items(
     page: Annotated[int, Query(ge=1)] = 1,
     page_size: Annotated[int, Query(ge=1, le=100)] = 10,
 ):
-    stmt = select(Item)
+    stmt = select(Items)
     if id_query:
-        stmt = stmt.where(Item.id.contains(id_query, autoescape=True))
+        stmt = stmt.where(Items.id.contains(id_query, autoescape=True))
     if name_query:
-        stmt = stmt.where(Item.name.contains(name_query, autoescape=True))
+        stmt = stmt.where(Items.name.contains(name_query, autoescape=True))
 
     total = session.scalar(select(func.count()).select_from(stmt.subquery()))
 
-    column = getattr(Item, order_by)
+    column = getattr(Items, order_by)
     items = session.scalars(
         stmt.order_by(column.desc() if descending else column.asc())
         .offset((page - 1) * page_size)
@@ -74,7 +74,7 @@ def list_items(
 
 @router.put("/")
 def edit_item(session: SessionDep, body: ItemEditOrAdd):
-    item = session.get(Item, body.id)
+    item = session.get(Items, body.id)
     if item is None:
         raise HTTPException(status_code=404, detail=f"Unable to find invoice {id}")
     item.name = body.name
@@ -92,16 +92,16 @@ def edit_item(session: SessionDep, body: ItemEditOrAdd):
 @router.post("/")
 def add_item(session: SessionDep, body: ItemEditOrAdd):
     existing = session.execute(
-        select(Item).where(Item.id == body.id)
+        select(Items).where(Items.id == body.id)
     ).scalar_one_or_none()
 
     if existing:
         raise HTTPException(
-            status_code=400, detail=f"Item with id {body.id} exists"
+            status_code=400, detail=f"Items with id {body.id} exists"
         )
 
     session.execute(
-        insert(Item).values(
+        insert(Items).values(
             id=body.id,
             name=body.name,
             type=body.type,
@@ -117,7 +117,7 @@ def add_item(session: SessionDep, body: ItemEditOrAdd):
 
 @router.delete("/")
 def delete_item(session: SessionDep, id: int):
-    item = session.get(Item, id)
+    item = session.get(Items, id)
     if item is None:
         raise HTTPException(status_code=404, detail=f"Unable to find invoice {id}")
     session.delete(item)

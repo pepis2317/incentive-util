@@ -6,9 +6,9 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.services.database import Base, engine
+from app.services.database import engine
 
-Invoice = Base.classes["invoices"]
+from ..models import Invoices
 
 router = APIRouter(prefix="/invoices", tags=["invoices"])
 
@@ -37,15 +37,15 @@ def list_invoices(
     page: Annotated[int, Query(ge=1)] = 1,
     page_size: Annotated[int, Query(ge=1, le=100)] = 10,
 ):
-    stmt = select(Invoice)
+    stmt = select(Invoices)
     if transaction_id_query:
         stmt = stmt.where(
-            Invoice.transaction_id.contains(transaction_id_query, autoescape=True)
+            Invoices.transaction_id.contains(transaction_id_query, autoescape=True)
         )
 
     total = session.scalar(select(func.count()).select_from(stmt.subquery()))
 
-    column = getattr(Invoice, order_by)
+    column = getattr(Invoices, order_by)
     invoices = session.scalars(
         stmt.order_by(column.desc() if descending else column.asc())
         .offset((page - 1) * page_size)
@@ -57,7 +57,7 @@ def list_invoices(
 
 @router.put("/")
 def edit_invoice(session: SessionDep, body: InvoiceEdit):
-    invoice = session.get(Invoice, body.id)
+    invoice = session.get(Invoices, body.id)
     if invoice is None:
         raise HTTPException(status_code=404, detail=f"Unable to find invoice {id}")
     invoice.invoice_id = body.transaction_id
@@ -69,7 +69,7 @@ def edit_invoice(session: SessionDep, body: InvoiceEdit):
 
 @router.delete("/")
 def delete_invoice(session: SessionDep, id: int):
-    invoice = session.get(Invoice, id)
+    invoice = session.get(Invoices, id)
     if invoice is None:
         raise HTTPException(status_code=404, detail=f"Unable to find invoice {id}")
     session.delete(invoice)
