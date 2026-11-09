@@ -1,6 +1,6 @@
 import datetime
 from decimal import Decimal
-from typing import Annotated, Literal
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
@@ -70,15 +70,17 @@ def get_session():
 
 SessionDep = Annotated[Session, Depends(get_session)]
 
-def calculate_discounted_price(sell_price:Decimal, discounts:DiscountRecords):
+
+def calculate_discounted_total(sell_price: Decimal, discounts: list[DiscountRecords]):
     sorted_discounts = sorted(discounts, key=lambda d: d.step)
     result = sell_price
     for discount in sorted_discounts:
         if discount.type == "percentage":
-            result -= result * (discount.value/100)
+            result -= result * (discount.value / 100)
         elif discount.type == "flat":
             result -= discount.value
     return result
+
 
 @router.get("/")
 def list_transaction_records(
@@ -120,16 +122,19 @@ def list_transaction_records(
 
     records = [
         {
-            "id": q.id,
-            "item": q.item,
-            "quantity": q.quantity,
-            "discounts": sorted(q.discount_records, key=lambda d: d.step),
-            "undiscounted_total": q.item.sell_price * q.quantity,
-            "discounted_total": calculate_discounted_price(q.item.sell_price, q.discount_records) * q.quantity,
-            "created_at": q.created_at,
-            "updated_at": q.updated_at,
+            "id": row.id,
+            "item": row.item,
+            "rowuantity": row.quantity,
+            "discounts": sorted(row.discount_records, key=lambda d: d.step),
+            "undiscounted_total": row.item.sell_price * row.quantity,
+            "discounted_total": calculate_discounted_total(
+                row.item.sell_price, row.discount_records
+            )
+            * row.quantity,
+            "created_at": row.created_at,
+            "updated_at": row.updated_at,
         }
-        for q in rows
+        for row in rows
     ]
 
     return {"records": records, "total": total, "page": page}

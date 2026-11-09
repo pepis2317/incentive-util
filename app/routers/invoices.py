@@ -1,14 +1,14 @@
 import datetime
-from typing import Annotated, Literal
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import func, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.services.database import engine
 
-from ..models import Invoices
+from ..models import Invoices, TransactionRecords
 
 router = APIRouter(prefix="/invoices", tags=["invoices"])
 
@@ -25,19 +25,41 @@ def get_session():
 
 SessionDep = Annotated[Session, Depends(get_session)]
 
-OrderBy = Literal["invoice_id", "created_at", "updated_at"]
+def calculate_undiscounted_total(transaction_records: list[TransactionRecords]):
+    total = 0
+    for record in transaction_records:
+        total += record.item.sell_price * record.quantity
+    return total
 
+def calculate_discounted_total(transaction_records: list[TransactionRecords]):
+    total = 0
+    for record in transaction_records:
+        discounts = record.discount_records
+        discounted_price = record.item.sell_price
+        for discount in discounts:
+            if discount.type == "percentage":
+                discounted_price -= discounted_price * (discount.value / 100)
+            elif discount.type == "flat":
+                discounted_price -= discount.value
+        total += discounted_price * record.quantity
+    return total
+            
 
 @router.get("/")
 def list_invoices(
     session: SessionDep,
     transaction_id_query: str | None = None,
-    order_by: OrderBy = "created_at",
     descending: bool = False,
     page: Annotated[int, Query(ge=1)] = 1,
     page_size: Annotated[int, Query(ge=1, le=100)] = 10,
 ):
-    stmt = select(Invoices)
+    stmt = select(Invoices).options(
+        selectinload(Invoices.transaction_records).options(
+            selectinload(TransactionRecords.item),
+            selectinload(TransactionRecords.discount_records),
+        ),
+        selectinload(Invoices.customer),
+    )
     if transaction_id_query:
         stmt = stmt.where(
             Invoices.transaction_id.contains(transaction_id_query, autoescape=True)
@@ -45,12 +67,24 @@ def list_invoices(
 
     total = session.scalar(select(func.count()).select_from(stmt.subquery()))
 
-    column = getattr(Invoices, order_by)
-    invoices = session.scalars(
-        stmt.order_by(column.desc() if descending else column.asc())
+    rows = session.scalars(
+        stmt.order_by(Invoices.created_at.desc(), Invoices.id)
         .offset((page - 1) * page_size)
         .limit(page_size)
     ).all()
+
+    invoices = [
+        {
+            "id": row.id,
+            "transaction_id":row.transaction_id,
+            "customer_name":row.customer.name,
+            "undiscounted_total": calculate_undiscounted_total(row.transaction_records),
+            "discounted_total": calculate_discounted_total(row.transaction_records),
+            "created_at": row.created_at,
+            "updated_at": row.updated_at,
+        }
+        for row in rows
+    ]
 
     return {"invoices": invoices, "total": total, "page": page}
 
