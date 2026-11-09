@@ -49,7 +49,6 @@ def calculate_discounted_total(transaction_records: list[TransactionRecords]):
 def list_invoices(
     session: SessionDep,
     transaction_id_query: str | None = None,
-    descending: bool = False,
     page: Annotated[int, Query(ge=1)] = 1,
     page_size: Annotated[int, Query(ge=1, le=100)] = 10,
 ):
