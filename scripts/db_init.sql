@@ -74,7 +74,51 @@ CREATE TABLE transaction_records(
 	invoice_id integer not null references invoices(id) on delete cascade,
 	item_id text not null references items(id) on delete cascade,
 	quantity integer not null,
-	created_at INTEGER NOT NULL DEFAULT (unixepoch()),
-	updated_at INTEGER,
+	created_at integer not null default (unixepoch()),
+	updated_at integer,
 	unique(invoice_id, item_id)
+);
+
+-- transaction_record_edits definition
+
+CREATE TABLE transaction_record_edits(
+	id integer not null primary key,
+	transaction_record_id integer not null references transaction_records(id) on delete cascade,
+	column_name text not null,
+	previous_value text not null,
+	current_value text not null,
+	created_at integer not null default (unixepoch())
+);
+
+-- transaction_record_deletions definition
+
+CREATE TABLE transaction_record_deletions(
+	id integer not null primary key,
+	invoice_id integer not null references invoices(id) on delete cascade,
+	item_id text not null,
+	quantity integer not null,
+	price_snapshot numeric not null,
+	created_at integer not null default (unixepoch())
+);
+
+-- discount_record_edits definition
+
+CREATE TABLE discount_record_edits(
+	id integer not null primary key,
+	discount_record_id integer not null references discount_records(id) on delete cascade,
+	column_name text not null,
+	previous_value text not null,
+	current_value text not null,
+	created_at integer not null default (unixepoch())
+);
+
+-- discount_record_deletions definition
+
+CREATE TABLE discount_record_deletions(
+	id integer not null primary key,
+	transaction_record_id integer not null references transaction_records(id) on delete cascade,
+	step integer not null,
+	type text not null,
+	value numeric not null,
+	created_at integer not null default (unixepoch())
 );

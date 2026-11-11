@@ -28,14 +28,14 @@ SessionDep = Annotated[Session, Depends(get_session)]
 def calculate_undiscounted_total(transaction_records: list[TransactionRecords]):
     total = 0
     for record in transaction_records:
-        total += record.item.sell_price * record.quantity
+        total += record.price_snapshot * record.quantity
     return total
 
 def calculate_discounted_total(transaction_records: list[TransactionRecords]):
     total = 0
     for record in transaction_records:
         discounts = record.discount_records
-        discounted_price = record.item.sell_price
+        discounted_price = record.price_snapshot
         for discount in discounts:
             if discount.type == "percentage":
                 discounted_price -= discounted_price * (discount.value / 100)
@@ -93,7 +93,7 @@ def edit_invoice(session: SessionDep, body: InvoiceEdit):
     invoice = session.get(Invoices, body.id)
     if invoice is None:
         raise HTTPException(status_code=404, detail=f"Unable to find invoice {id}")
-    invoice.invoice_id = body.transaction_id
+    invoice.transaction_id = body.transaction_id
     invoice.updated_at = datetime.datetime.now().timestamp()
     session.commit()
 

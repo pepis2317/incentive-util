@@ -11,9 +11,13 @@ from app.services.database import engine
 
 from ..models import (
     Customers,
+    DiscountRecordDeletions,
+    DiscountRecordEdits,
     DiscountRecords,
     Invoices,
     Items,
+    TransactionRecordDeletions,
+    TransactionRecordEdits,
     TransactionRecords,
 )
 
@@ -29,6 +33,7 @@ class ItemDiscount(BaseModel):
 class RecordAddItem(BaseModel):
     item_id: str
     item_quantity: int
+    price_snapshot: int
     discounts: list[ItemDiscount]
 
 
@@ -52,6 +57,7 @@ class RecordAdd(BaseModel):
 
 class RecordEditRow(BaseModel):
     record_id: int
+    price_snapshot: Decimal
     item_id: str
     quantity: int
 
@@ -59,6 +65,7 @@ class RecordEditRow(BaseModel):
 class EditRecordAddItem(BaseModel):
     invoice_id: int
     item_id: str
+    price_snapshot: Decimal
     quantity: int
     discounts: list[ItemDiscount]
 
@@ -94,11 +101,21 @@ def list_transaction_records(
         select(TransactionRecords)
         .options(
             selectinload(TransactionRecords.invoice),
-            selectinload(TransactionRecords.discount_records),
+            selectinload(TransactionRecords.transaction_record_edits),
+            selectinload(TransactionRecords.discount_records).options(
+                selectinload(DiscountRecords.discount_record_edits)
+            ),
+            selectinload(TransactionRecords.discount_record_deletions),
             selectinload(TransactionRecords.item),
         )
         .where(
             TransactionRecords.invoice.has(Invoices.transaction_id == transaction_id)
+        )
+    )
+
+    deletion_stmt = select(TransactionRecordDeletions).where(
+        TransactionRecordDeletions.invoice.has(
+            Invoices.transaction_id == transaction_id
         )
     )
 
@@ -120,15 +137,23 @@ def list_transaction_records(
         .limit(page_size)
     ).all()
 
+    deletions = session.scalars(
+        deletion_stmt.order_by(
+            TransactionRecordDeletions.created_at.desc(), TransactionRecordDeletions.id
+        )
+    ).all()
+
     records = [
         {
             "id": row.id,
             "item": row.item,
-            "rowuantity": row.quantity,
-            "discounts": sorted(row.discount_records, key=lambda d: d.step),
-            "undiscounted_total": row.item.sell_price * row.quantity,
+            "quantity": row.quantity,
+            "transaction_record_edits": row.transaction_record_edits,
+            "discounts_records": row.discount_records,
+            "discount_record_deletions": row.discount_record_deletions,
+            "undiscounted_total": row.price_snapshot * row.quantity,
             "discounted_total": calculate_discounted_total(
-                row.item.sell_price, row.discount_records
+                row.price_snapshot, row.discount_records
             )
             * row.quantity,
             "created_at": row.created_at,
@@ -137,7 +162,12 @@ def list_transaction_records(
         for row in rows
     ]
 
-    return {"records": records, "total": total, "page": page}
+    return {
+        "records": records,
+        "deletions": deletions,
+        "total": total,
+        "page": page,
+    }
 
 
 @router.post("/")
@@ -220,6 +250,7 @@ def add_transaction_records(session: SessionDep, body: RecordAdd):
             "invoice_id": invoice_id,
             "item_id": item.item_id,
             "quantity": item.item_quantity,
+            "price_snapshot": item.price_snapshot,
         }
         for item in body.items
     ]
@@ -268,9 +299,33 @@ def edit_transaction_record(session: SessionDep, body: RecordEditRow):
             detail=f"Item {body.item_id} does not exist",
         )
 
+    edits = []
+    changing_columns = ["quantity", "item_id", "price_snapshot"]
+    for column in changing_columns:
+        old_value = getattr(record, column)
+        new_value = getattr(body, column)
+
+        if column == "price_snapshot":
+            old_value = Decimal(str(old_value)).quantize(Decimal("0.01"))
+            new_value = Decimal(str(new_value)).quantize(Decimal("0.01"))
+
+        if old_value != new_value:
+            edits.append(
+                {
+                    "transaction_record_id": record.id,
+                    "column_name": column,
+                    "previous_value": str(old_value),
+                    "current_value": str(new_value),
+                }
+            )
+
+    session.execute(insert(TransactionRecordEdits).values(edits))
+
     record.quantity = body.quantity
     record.item_id = body.item_id
+    record.price_snapshot = body.price_snapshot
     record.updated_at = datetime.datetime.now().timestamp()
+
     session.commit()
 
     return {"success": f"transaction record {body.record_id} has been updated"}
@@ -311,6 +366,29 @@ def edit_discount_record(session: SessionDep, body: DiscountEditRow):
         raise HTTPException(
             status_code=404, detail=f"Unable to find record {body.record_id}"
         )
+
+    edits = []
+    changing_columns = ["type", "value"]
+    request_map = {"type": "discount_type", "value": "discount_value"}
+    for column in changing_columns:
+        old_value = getattr(record, column)
+        new_value = getattr(body, request_map[column])
+
+        if column == "value":
+            old_value = Decimal(str(old_value)).quantize(Decimal("0.01"))
+            new_value = Decimal(str(new_value)).quantize(Decimal("0.01"))
+
+        if old_value != new_value:
+            edits.append(
+                {
+                    "discount_record_id": record.id,
+                    "column_name": column,
+                    "previous_value": str(old_value),
+                    "current_value": str(new_value),
+                }
+            )
+
+    session.execute(insert(DiscountRecordEdits).values(edits))
 
     record.type = body.discount_type
     record.value = body.discount_value
@@ -383,7 +461,10 @@ def add_transaction_record_item(session: SessionDep, body: EditRecordAddItem):
     transaction_record_id = session.execute(
         insert(TransactionRecords)
         .values(
-            invoice_id=body.invoice_id, item_id=body.item_id, quantity=body.quantity
+            invoice_id=body.invoice_id,
+            item_id=body.item_id,
+            quantity=body.quantity,
+            price_snapshot=body.price_snapshot,
         )
         .returning(TransactionRecords.id)
     ).scalar_one()
@@ -410,6 +491,16 @@ def delete_transaction_record_row(session: SessionDep, id: int):
     record = session.get(TransactionRecords, id)
     if record is None:
         raise HTTPException(status_code=404, detail=f"Unable to find record {id}")
+
+    session.execute(
+        insert(TransactionRecordDeletions).values(
+            invoice_id=record.invoice_id,
+            item_id=record.item_id,
+            quantity=record.quantity,
+            price_snapshot=record.price_snapshot
+        )
+    )
+
     session.delete(record)
     session.commit()
 
@@ -421,6 +512,15 @@ def delete_discount_record_row(session: SessionDep, id: int):
     record = session.get(DiscountRecords, id)
     if record is None:
         raise HTTPException(status_code=404, detail=f"Unable to find record {id}")
+
+    session.execute(
+        insert(DiscountRecordDeletions).values(
+            transaction_record_id=record.transaction_record_id,
+            step=record.step,
+            type=record.type,
+            value=record.value
+        )
+    )
 
     session.delete(record)
     session.flush()
