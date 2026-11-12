@@ -45,6 +45,9 @@ class Items(Base):
     transaction_records: Mapped[list["TransactionRecords"]] = relationship(
         "TransactionRecords", back_populates="item"
     )
+    transaction_record_snapshots: Mapped[list["TransactionRecordSnapshots"]] = (
+        relationship("TransactionRecordSnapshots", back_populates="item")
+    )
 
 
 class Customers(Base):
@@ -68,6 +71,9 @@ class Customers(Base):
     )
     invoices: Mapped[list["Invoices"]] = relationship(
         "Invoices", back_populates="customer"
+    )
+    invoice_snapshots: Mapped[list["InvoiceSnapshots"]] = relationship(
+        "InvoiceSnapshots", back_populates="customer"
     )
 
 
@@ -106,13 +112,11 @@ class Invoices(Base):
     updated_at: Mapped[Optional[int]] = mapped_column(Integer)
 
     customer: Mapped["Customers"] = relationship("Customers", back_populates="invoices")
-    transaction_record_deletions: Mapped[list["TransactionRecordDeletions"]] = (
-        relationship(
-            "TransactionRecordDeletions",
-            cascade="all, delete-orphan",
-            passive_deletes=True,
-            back_populates="invoice",
-        )
+    invoice_snapshots: Mapped[list["InvoiceSnapshots"]] = relationship(
+        "InvoiceSnapshots",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        back_populates="invoice",
     )
     transaction_records: Mapped[list["TransactionRecords"]] = relationship(
         "TransactionRecords",
@@ -122,22 +126,32 @@ class Invoices(Base):
     )
 
 
-class TransactionRecordDeletions(Base):
-    __tablename__ = "transaction_record_deletions"
+class InvoiceSnapshots(Base):
+    __tablename__ = "invoice_snapshots"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     invoice_id: Mapped[int] = mapped_column(
         ForeignKey("invoices.id", ondelete="CASCADE"), nullable=False
     )
-    item_id: Mapped[str] = mapped_column(Text, nullable=False)
-    quantity: Mapped[int] = mapped_column(Integer, nullable=False)
-    price_snapshot: Mapped[decimal.Decimal] = mapped_column(Numeric, nullable=False)
+    customer_id: Mapped[str] = mapped_column(ForeignKey("customers.id"), nullable=False)
+    transaction_id: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[int] = mapped_column(
         Integer, nullable=False, server_default=text("unixepoch()")
     )
 
+    customer: Mapped["Customers"] = relationship(
+        "Customers", back_populates="invoice_snapshots"
+    )
     invoice: Mapped["Invoices"] = relationship(
-        "Invoices", back_populates="transaction_record_deletions"
+        "Invoices", back_populates="invoice_snapshots"
+    )
+    transaction_record_snapshots: Mapped[list["TransactionRecordSnapshots"]] = (
+        relationship(
+            "TransactionRecordSnapshots",
+            cascade="all, delete-orphan",
+            passive_deletes=True,
+            back_populates="invoice_snapshot",
+        )
     )
 
 
@@ -161,42 +175,19 @@ class TransactionRecords(Base):
         "Invoices", back_populates="transaction_records"
     )
     item: Mapped["Items"] = relationship("Items", back_populates="transaction_records")
-    discount_record_deletions: Mapped[list["DiscountRecordDeletions"]] = relationship(
-        "DiscountRecordDeletions",
-        cascade="all, delete-orphan",
-        passive_deletes=True,
-        back_populates="transaction_record",
-    )
     discount_records: Mapped[list["DiscountRecords"]] = relationship(
         "DiscountRecords",
         cascade="all, delete-orphan",
         passive_deletes=True,
         back_populates="transaction_record",
     )
-    transaction_record_edits: Mapped[list["TransactionRecordEdits"]] = relationship(
-        "TransactionRecordEdits",
-        cascade="all, delete-orphan",
-        passive_deletes=True,
-        back_populates="transaction_record",
-    )
-
-
-class DiscountRecordDeletions(Base):
-    __tablename__ = "discount_record_deletions"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    transaction_record_id: Mapped[int] = mapped_column(
-        ForeignKey("transaction_records.id", ondelete="CASCADE"), nullable=False
-    )
-    step: Mapped[int] = mapped_column(Integer, nullable=False)
-    type: Mapped[str] = mapped_column(Text, nullable=False)
-    value: Mapped[decimal.Decimal] = mapped_column(Numeric, nullable=False)
-    created_at: Mapped[int] = mapped_column(
-        Integer, nullable=False, server_default=text("unixepoch()")
-    )
-
-    transaction_record: Mapped["TransactionRecords"] = relationship(
-        "TransactionRecords", back_populates="discount_record_deletions"
+    transaction_discount_snapshots: Mapped[list["TransactionDiscountSnapshots"]] = (
+        relationship(
+            "TransactionDiscountSnapshots",
+            cascade="all, delete-orphan",
+            passive_deletes=True,
+            back_populates="transaction_record",
+        )
     )
 
 
@@ -206,8 +197,7 @@ class DiscountRecords(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     transaction_record_id: Mapped[int] = mapped_column(
-        ForeignKey("transaction_records.id", ondelete="CASCADE"),
-        nullable=False,
+        ForeignKey("transaction_records.id", ondelete="CASCADE"), nullable=False
     )
     step: Mapped[int] = mapped_column(Integer, nullable=False)
     type: Mapped[str] = mapped_column(Text, nullable=False)
@@ -220,47 +210,69 @@ class DiscountRecords(Base):
     transaction_record: Mapped["TransactionRecords"] = relationship(
         "TransactionRecords", back_populates="discount_records"
     )
-    discount_record_edits: Mapped[list["DiscountRecordEdits"]] = relationship(
-        "DiscountRecordEdits",
-        cascade="all, delete-orphan",
-        passive_deletes=True,
-        back_populates="discount_record",
-    )
 
 
-class TransactionRecordEdits(Base):
-    __tablename__ = "transaction_record_edits"
+class TransactionDiscountSnapshots(Base):
+    __tablename__ = "transaction_discount_snapshots"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     transaction_record_id: Mapped[int] = mapped_column(
         ForeignKey("transaction_records.id", ondelete="CASCADE"), nullable=False
     )
-    column_name: Mapped[str] = mapped_column(Text, nullable=False)
-    previous_value: Mapped[str] = mapped_column(Text, nullable=False)
-    current_value: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[int] = mapped_column(
         Integer, nullable=False, server_default=text("unixepoch()")
     )
 
     transaction_record: Mapped["TransactionRecords"] = relationship(
-        "TransactionRecords", back_populates="transaction_record_edits"
+        "TransactionRecords", back_populates="transaction_discount_snapshots"
+    )
+    discount_record_snapshots: Mapped[list["DiscountRecordSnapshots"]] = relationship(
+        "DiscountRecordSnapshots",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        back_populates="transaction_discount_snapshot"
     )
 
 
-class DiscountRecordEdits(Base):
-    __tablename__ = "discount_record_edits"
+class TransactionRecordSnapshots(Base):
+    __tablename__ = "transaction_record_snapshots"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    discount_record_id: Mapped[int] = mapped_column(
-        ForeignKey("discount_records.id", ondelete="CASCADE"), nullable=False
+    invoice_snapshot_id: Mapped[int] = mapped_column(
+        ForeignKey("invoice_snapshots.id", ondelete="CASCADE"), nullable=False
     )
-    column_name: Mapped[str] = mapped_column(Text, nullable=False)
-    previous_value: Mapped[str] = mapped_column(Text, nullable=False)
-    current_value: Mapped[str] = mapped_column(Text, nullable=False)
+    item_id: Mapped[str] = mapped_column(ForeignKey("items.id"), nullable=False)
+    quantity: Mapped[int] = mapped_column(Integer, nullable=False)
+    undiscounted_price: Mapped[decimal.Decimal] = mapped_column(Numeric, nullable=False)
+    discounted_price: Mapped[decimal.Decimal] = mapped_column(Numeric, nullable=False)
     created_at: Mapped[int] = mapped_column(
         Integer, nullable=False, server_default=text("unixepoch()")
     )
 
-    discount_record: Mapped["DiscountRecords"] = relationship(
-        "DiscountRecords", back_populates="discount_record_edits"
+    invoice_snapshot: Mapped["InvoiceSnapshots"] = relationship(
+        "InvoiceSnapshots", back_populates="transaction_record_snapshots"
+    )
+    item: Mapped["Items"] = relationship(
+        "Items", back_populates="transaction_record_snapshots"
+    )
+
+
+class DiscountRecordSnapshots(Base):
+    __tablename__ = "discount_record_snapshots"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    transaction_discount_snapshot_id: Mapped[int] = mapped_column(
+        ForeignKey("transaction_discount_snapshots.id", ondelete="CASCADE"), nullable=False
+    )
+    step: Mapped[int] = mapped_column(Integer, nullable=False)
+    value: Mapped[decimal.Decimal] = mapped_column(Numeric, nullable=False)
+    type: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("unixepoch()")
+    )
+
+    transaction_discount_snapshot: Mapped["TransactionDiscountSnapshots"] = (
+        relationship(
+            "TransactionDiscountSnapshots", back_populates="discount_record_snapshots"
+        )
     )
