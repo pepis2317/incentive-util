@@ -297,8 +297,8 @@ def edit_invoice(session: SessionDep, body: InvoiceEdit):
         insert(InvoiceSnapshots)
         .values(
             invoice_id=body.id,
-            transaction_id=body.transaction_id,
-            customer_id=body.customer_id,
+            transaction_id=invoice.transaction_id,
+            customer_id=invoice.customer_id,
         )
         .returning(InvoiceSnapshots.id)
     ).scalar_one()
