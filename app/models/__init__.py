@@ -1,7 +1,6 @@
 from .models import (
     Base,
     Customers,
-    CustomerTypes,
     DiscountRecordSnapshots,
     DiscountRecords,
     Discounts,

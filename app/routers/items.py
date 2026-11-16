@@ -4,7 +4,7 @@ from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import func, insert, select
+from sqlalchemy import func, insert, or_, select
 from sqlalchemy.orm import Session
 
 from app.services.database import engine
@@ -47,24 +47,23 @@ OrderBy = Literal[
 @router.get("/")
 def list_items(
     session: SessionDep,
-    id_query: str | None = None,
-    name_query: str | None = None,
-    order_by: OrderBy = "created_at",
-    descending: bool = False,
+    item_query: str | None = None,
     page: Annotated[int, Query(ge=1)] = 1,
     page_size: Annotated[int, Query(ge=1, le=100)] = 10,
 ):
     stmt = select(Items)
-    if id_query:
-        stmt = stmt.where(Items.id.contains(id_query, autoescape=True))
-    if name_query:
-        stmt = stmt.where(Items.name.contains(name_query, autoescape=True))
+    if item_query:
+        stmt = stmt.where(
+            or_(
+                Items.id.icontains(item_query, autoescape=True),
+                Items.name.icontains(item_query, autoescape=True),
+            )
+        )
 
     total = session.scalar(select(func.count()).select_from(stmt.subquery()))
 
-    column = getattr(Items, order_by)
     items = session.scalars(
-        stmt.order_by(column.desc() if descending else column.asc())
+        stmt.order_by(Items.created_at.desc(), Items.id)
         .offset((page - 1) * page_size)
         .limit(page_size)
     ).all()

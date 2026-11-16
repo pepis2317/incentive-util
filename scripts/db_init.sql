@@ -1,17 +1,7 @@
--- customer_types definition
-
-CREATE TABLE customer_types(
-	id integer not null primary key,
-	name text not null,
-	created_at integer not null default (unixepoch()),
-	updated_at integer
-);
-
 -- customers definition
 
 CREATE TABLE customers(
 	id text not null primary key,
-	type_id integer not null references customer_types(id) on delete cascade,
 	name text not null,
 	created_at integer not null default (unixepoch()),
 	updated_at integer

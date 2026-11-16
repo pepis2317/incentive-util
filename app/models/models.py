@@ -9,20 +9,6 @@ class Base(DeclarativeBase):
     pass
 
 
-class CustomerTypes(Base):
-    __tablename__ = "customer_types"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    name: Mapped[str] = mapped_column(Text, nullable=False)
-    created_at: Mapped[int] = mapped_column(
-        Integer, nullable=False, server_default=text("unixepoch()")
-    )
-    updated_at: Mapped[Optional[int]] = mapped_column(Integer)
-
-    customers: Mapped[list["Customers"]] = relationship(
-        "Customers", back_populates="type"
-    )
-
 
 class Items(Base):
     __tablename__ = "items"
@@ -54,18 +40,12 @@ class Customers(Base):
     __tablename__ = "customers"
 
     id: Mapped[str] = mapped_column(Text, primary_key=True)
-    type_id: Mapped[int] = mapped_column(
-        ForeignKey("customer_types.id"), nullable=False
-    )
     name: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[int] = mapped_column(
         Integer, nullable=False, server_default=text("unixepoch()")
     )
     updated_at: Mapped[Optional[int]] = mapped_column(Integer)
 
-    type: Mapped["CustomerTypes"] = relationship(
-        "CustomerTypes", back_populates="customers"
-    )
     discounts: Mapped[list["Discounts"]] = relationship(
         "Discounts", back_populates="customer"
     )

@@ -2,9 +2,9 @@ import datetime
 from decimal import Decimal
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy import func, insert, or_, select
+from sqlalchemy import func, insert, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.services.database import engine
@@ -30,7 +30,6 @@ class DiscountEditRow(BaseModel):
 
 
 class AddDiscountRow(BaseModel):
-    transaction_record_id: int
     discount_type: str
     discount_value: Decimal
 
@@ -40,12 +39,9 @@ class RecordEditRow(BaseModel):
     price_snapshot: Decimal
     item_id: str
     quantity: int
-
-
-class ItemDiscount(BaseModel):
-    discount_type: str
-    discount_value: Decimal
-    discount_step: int
+    discounts: list[DiscountEditRow]
+    discounts_to_delete: list[int]
+    discounts_to_add: list[AddDiscountRow]
 
 
 def get_session():
@@ -75,7 +71,8 @@ def edit_transaction_record(session: SessionDep, body: RecordEditRow):
         options=[
             selectinload(TransactionRecords.invoice).selectinload(
                 Invoices.transaction_records
-            )
+            ),
+            selectinload(TransactionRecords.discount_records),
         ],
     )
 
@@ -92,6 +89,16 @@ def edit_transaction_record(session: SessionDep, body: RecordEditRow):
         raise HTTPException(
             status_code=400,
             detail=f"Item {body.item_id} does not exist",
+        )
+
+    other_item_ids = {
+        r.item_id for r in record.invoice.transaction_records if r.id != record.id
+    }
+
+    if body.item_id in other_item_ids:
+        raise HTTPException(
+            status_code=400,
+            detail="Item already exists in this invoice",
         )
 
     invoice_snapshot_id = session.execute(
@@ -119,32 +126,9 @@ def edit_transaction_record(session: SessionDep, body: RecordEditRow):
         insert(TransactionRecordSnapshots).values(transaction_record_snapshots)
     )
 
-    record.quantity = body.quantity
-    record.item_id = body.item_id
-    record.price_snapshot = body.price_snapshot
-    record.updated_at = datetime.datetime.now().timestamp()
-
-    session.commit()
-
-    return {"success": f"transaction record {body.record_id} has been updated"}
-
-
-@router.put("/add-discount-record")
-def add_discount_record(session: SessionDep, body: AddDiscountRow):
-    record = session.get(
-        TransactionRecords,
-        body.transaction_record_id,
-        options=[selectinload(TransactionRecords.discount_records)],
-    )
-
-    if record is None:
-        raise HTTPException(
-            status_code=404, detail=f"Unable to find record {body.record_id}"
-        )
-
     transaction_discount_snapshot_id = session.execute(
         insert(TransactionDiscountSnapshots)
-        .values(transaction_record_id=body.transaction_record_id)
+        .values(transaction_record_id=record.id)
         .returning(TransactionDiscountSnapshots.id)
     ).scalar_one()
 
@@ -157,69 +141,60 @@ def add_discount_record(session: SessionDep, body: AddDiscountRow):
         }
         for discount in record.discount_records
     ]
+    if(discount_record_snapshots):
+        session.execute(insert(DiscountRecordSnapshots).values(discount_record_snapshots))
 
-    session.execute(insert(DiscountRecordSnapshots).values(discount_record_snapshots))
+    record.quantity = body.quantity
+    record.item_id = body.item_id
+    record.price_snapshot = body.price_snapshot
+    record.updated_at = datetime.datetime.now().timestamp()
+    record.invoice.updated_at = datetime.datetime.now().timestamp()
+
+    discounts_by_id = {d.id: d for d in record.discount_records}
+
+    for discount_id in body.discounts_to_delete:
+        discount = discounts_by_id.pop(discount_id, None)
+        if discount is None:
+            raise HTTPException(404, f"discount {discount_id} not found on this record")
+        session.delete(discount)
+
+    session.flush()
+    for row in body.discounts:
+        discount = discounts_by_id.get(row.discount_record_id)
+        if discount is None:
+            raise HTTPException(
+                404, f"discount {row.discount_record_id} not found on this record"
+            )
+        discount.type = row.discount_type
+        discount.value = row.discount_value
+        discount.updated_at = datetime.datetime.now().timestamp()
+
+    sorted_discounts = sorted(discounts_by_id.values(), key=lambda d: d.step)
+    for new_step, discount in enumerate(sorted_discounts, start=1):
+        discount.step = new_step
 
     latest_step = session.execute(
-        select(func.max(DiscountRecords.step)).where(
-            DiscountRecords.transaction_record_id == body.transaction_record_id
+        select(func.coalesce(func.max(DiscountRecords.step), 0)).where(
+            DiscountRecords.transaction_record_id == body.record_id
         )
-    ).scalar()
-
-    session.execute(
-        insert(DiscountRecords).values(
-            transaction_record_id=body.transaction_record_id,
-            step=latest_step + 1,
-            type=body.discount_type,
-            value=body.discount_value,
-        )
-    )
-
-    session.commit()
-    return {"success": f"added discount record for {body.transaction_record_id}"}
-
-
-@router.put("/edit-discount-record")
-def edit_discount_record(session: SessionDep, body: DiscountEditRow):
-    record = session.get(
-        DiscountRecords,
-        body.discount_record_id,
-        options=[
-            selectinload(DiscountRecords.transaction_record).selectinload(
-                TransactionRecords.discount_records
-            )
-        ],
-    )
-
-    if record is None:
-        raise HTTPException(
-            status_code=404, detail=f"Unable to find record {body.record_id}"
-        )
-
-    transaction_discount_snapshot_id = session.execute(
-        insert(TransactionDiscountSnapshots)
-        .values(transaction_record_id=record.transaction_record_id)
-        .returning(TransactionDiscountSnapshots.id)
     ).scalar_one()
 
-    discount_record_snapshots = [
+    discounts_to_insert = [
         {
-            "transaction_discount_snapshot_id": transaction_discount_snapshot_id,
-            "step": discount.step,
-            "value": discount.value,
-            "type": discount.type,
+            "transaction_record_id": body.record_id,
+            "step": latest_step + step,
+            "value": discount.discount_value,
+            "type": discount.discount_type,
         }
-        for discount in record.transaction_record.discount_records
+        for step, discount in enumerate(body.discounts_to_add, start=1)
     ]
 
-    session.execute(insert(DiscountRecordSnapshots).values(discount_record_snapshots))
+    if discounts_to_insert:
+        session.execute(insert(DiscountRecords).values(discounts_to_insert))
 
-    record.type = body.discount_type
-    record.value = body.discount_value
-    record.updated_at = datetime.datetime.now().timestamp()
     session.commit()
 
-    return {"success": f"discount record {body.discount_record_id} has been updated"}
+    return {"success": f"transaction record {body.record_id} has been updated"}
 
 
 @router.delete("/delete-transaction-record")
@@ -266,57 +241,3 @@ def delete_transaction_record_row(session: SessionDep, id: int):
     session.commit()
 
     return {"success": f"transaction record {id} has been deleted"}
-
-
-@router.delete("/delete-discount-record")
-def delete_discount_record_row(session: SessionDep, id: int):
-    record = session.get(
-        DiscountRecords,
-        id,
-        options=[
-            selectinload(DiscountRecords.transaction_record).selectinload(
-                TransactionRecords.discount_records
-            )
-        ],
-    )
-    if record is None:
-        raise HTTPException(status_code=404, detail=f"Unable to find record {id}")
-
-    transaction_discount_snapshot_id = session.execute(
-        insert(TransactionDiscountSnapshots)
-        .values(transaction_record_id=record.transaction_record_id)
-        .returning(TransactionDiscountSnapshots.id)
-    ).scalar_one()
-
-    discount_record_snapshots = [
-        {
-            "transaction_discount_snapshot_id": transaction_discount_snapshot_id,
-            "step": discount.step,
-            "value": discount.value,
-            "type": discount.type,
-        }
-        for discount in record.transaction_record.discount_records
-    ]
-
-    session.execute(insert(DiscountRecordSnapshots).values(discount_record_snapshots))
-
-    session.delete(record)
-    session.flush()
-
-    discounts_after = (
-        session.execute(
-            select(DiscountRecords).where(
-                DiscountRecords.transaction_record_id == record.transaction_record_id,
-                DiscountRecords.step > record.step,
-            )
-        )
-        .scalars()
-        .all()
-    )
-
-    for discounts in discounts_after:
-        discounts.step -= 1
-
-    session.commit()
-
-    return {"success": f"discount record {id} has been deleted"}

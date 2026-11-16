@@ -85,8 +85,7 @@ def apply_discount(record: TransactionRecords):
 def calculate_discounted_total(transaction_records: list[TransactionRecords]):
     total = 0
     for record in transaction_records:
-        discounts = record.discount_records
-        discounted_price = apply_discount(discounts)
+        discounted_price = apply_discount(record)
         total += discounted_price * record.quantity
     return total
 
@@ -134,7 +133,7 @@ def list_invoices(
     return {"invoices": invoices, "total": total, "page": page}
 
 
-@router.get("/id")
+@router.get("/detail")
 def get_invoice_detail(session: SessionDep, id: int, item_query: str | None = None):
     stmt = (
         select(Invoices)
@@ -145,10 +144,14 @@ def get_invoice_detail(session: SessionDep, id: int, item_query: str | None = No
                     selectinload(TransactionDiscountSnapshots.discount_record_snapshots)
                 ),
                 selectinload(TransactionRecords.discount_records),
+                selectinload(TransactionRecords.item)
             ),
             selectinload(Invoices.invoice_snapshots).options(
-                selectinload(InvoiceSnapshots.transaction_record_snapshots)
+                selectinload(InvoiceSnapshots.transaction_record_snapshots).options(
+                    selectinload(TransactionRecordSnapshots.item)
+                )
             ),
+            selectinload(Invoices.customer)
         )
     )
 
@@ -271,8 +274,8 @@ def create_invoice(session: SessionDep, body: InvoiceAdd):
         for item in body.items
         for discount in item.discounts
     ]
-
-    session.execute(insert(DiscountRecords).values(discounts_to_insert))
+    if discounts_to_insert:
+        session.execute(insert(DiscountRecords).values(discounts_to_insert))
 
     session.commit()
     return {"success": "invoice created"}
@@ -405,10 +408,10 @@ def add_transaction_record_item(session: SessionDep, body: EditInvoiceAddItem):
         }
         for record in records
     ]
-
-    session.execute(
-        insert(TransactionRecordSnapshots).values(transaction_record_snapshots)
-    )
+    if transaction_record_snapshots:
+        session.execute(
+            insert(TransactionRecordSnapshots).values(transaction_record_snapshots)
+        )
 
     transaction_record_id = session.execute(
         insert(TransactionRecords)
@@ -431,7 +434,8 @@ def add_transaction_record_item(session: SessionDep, body: EditInvoiceAddItem):
         for discount in body.discounts
     ]
 
-    session.execute(insert(DiscountRecords).values(discounts_to_insert))
+    if discounts_to_insert:
+        session.execute(insert(DiscountRecords).values(discounts_to_insert))
 
     session.commit()
 
