@@ -15,7 +15,6 @@ from ..models import (
     Invoices,
     InvoiceSnapshots,
     Items,
-    TransactionDiscountSnapshots,
     TransactionRecords,
     TransactionRecordSnapshots,
 )
@@ -116,33 +115,42 @@ def edit_transaction_record(session: SessionDep, body: RecordEditRow):
             "invoice_snapshot_id": invoice_snapshot_id,
             "item_id": rec.item_id,
             "quantity": rec.quantity,
-            "undiscounted_price": rec.price_snapshot,
-            "discounted_price": apply_discount(rec),
+            "price_snapshot": rec.price_snapshot,
         }
         for rec in record.invoice.transaction_records
     ]
 
-    session.execute(
-        insert(TransactionRecordSnapshots).values(transaction_record_snapshots)
+    inserted_tr_snapshots = (
+        session.execute(
+            insert(TransactionRecordSnapshots)
+            .values(transaction_record_snapshots)
+            .returning(TransactionRecordSnapshots)
+        )
+        .scalars()
+        .all()
     )
 
-    transaction_discount_snapshot_id = session.execute(
-        insert(TransactionDiscountSnapshots)
-        .values(transaction_record_id=record.id)
-        .returning(TransactionDiscountSnapshots.id)
-    ).scalar_one()
+    item_discount_map = {
+        transaction.item_id: transaction.discount_records
+        for transaction in record.invoice.transaction_records
+    }
 
-    discount_record_snapshots = [
-        {
-            "transaction_discount_snapshot_id": transaction_discount_snapshot_id,
-            "step": discount.step,
-            "value": discount.value,
-            "type": discount.type,
-        }
-        for discount in record.discount_records
-    ]
-    if(discount_record_snapshots):
-        session.execute(insert(DiscountRecordSnapshots).values(discount_record_snapshots))
+    discount_record_snapshots = []
+    for snapshot in inserted_tr_snapshots:
+        discounts = item_discount_map[snapshot.item_id]
+        for discount in discounts:
+            discount_record_snapshots.append(
+                {
+                    "transaction_record_snapshot_id": snapshot.id,
+                    "step": discount.step,
+                    "value": discount.value,
+                    "type": discount.type,
+                }
+            )
+    if discount_record_snapshots:
+        session.execute(
+            insert(DiscountRecordSnapshots).values(discount_record_snapshots)
+        )
 
     record.quantity = body.quantity
     record.item_id = body.item_id
@@ -197,7 +205,7 @@ def edit_transaction_record(session: SessionDep, body: RecordEditRow):
     return {"success": f"transaction record {body.record_id} has been updated"}
 
 
-@router.delete("/delete-transaction-record")
+@router.delete("/")
 def delete_transaction_record_row(session: SessionDep, id: int):
     record = session.get(
         TransactionRecords,
@@ -227,15 +235,42 @@ def delete_transaction_record_row(session: SessionDep, id: int):
             "invoice_snapshot_id": invoice_snapshot_id,
             "item_id": record.item_id,
             "quantity": record.quantity,
-            "undiscounted_price": record.price_snapshot,
-            "discounted_price": apply_discount(record),
+            "price_snapshot": record.price_snapshot,
         }
         for record in record.invoice.transaction_records
     ]
 
-    session.execute(
-        insert(TransactionRecordSnapshots).values(transaction_record_snapshots)
+    inserted_tr_snapshots = (
+        session.execute(
+            insert(TransactionRecordSnapshots)
+            .values(transaction_record_snapshots)
+            .returning(TransactionRecordSnapshots)
+        )
+        .scalars()
+        .all()
     )
+
+    item_discount_map = {
+        transaction.item_id: transaction.discount_records
+        for transaction in record.invoice.transaction_records
+    }
+
+    discount_record_snapshots = []
+    for snapshot in inserted_tr_snapshots:
+        discounts = item_discount_map[snapshot.item_id]
+        for discount in discounts:
+            discount_record_snapshots.append(
+                {
+                    "transaction_record_snapshot_id": snapshot.id,
+                    "step": discount.step,
+                    "value": discount.value,
+                    "type": discount.type,
+                }
+            )
+    if discount_record_snapshots:
+        session.execute(
+            insert(DiscountRecordSnapshots).values(discount_record_snapshots)
+        )
 
     session.delete(record)
     session.commit()

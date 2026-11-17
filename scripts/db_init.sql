@@ -73,7 +73,7 @@ CREATE TABLE transaction_records(
 
 CREATE TABLE discount_record_snapshots(
 	id integer not null primary key,
-	transaction_discount_snapshot_id integer not null references transaction_discount_snapshots(id) on delete cascade,
+	transaction_record_snapshot_id integer not null references transaction_record_snapshots(id) on delete cascade,
 	step integer not null,
 	value numeric not null,
 	type text not null,
@@ -83,29 +83,20 @@ CREATE TABLE discount_record_snapshots(
 -- invoice_snapshots definition
 
 CREATE TABLE invoice_snapshots(
-id integer not null primary key,
-invoice_id integer not null references invoices(id) on delete cascade,
-customer_id text not null references customers(id) on delete cascade,
-transaction_id text not null,
-created_at integer not null default (unixepoch())
-);
-
--- transaction_discount_snapshots definition
-
-CREATE TABLE transaction_discount_snapshots(
 	id integer not null primary key,
-	transaction_record_id integer not null references transaction_records(id) on delete cascade,
+	invoice_id integer not null references invoices(id) on delete cascade,
+	customer_id text not null references customers(id) on delete cascade,
+	transaction_id text not null,
 	created_at integer not null default (unixepoch())
 );
 
 -- transaction_record_snapshots definition
 
 CREATE TABLE transaction_record_snapshots(
-	id integer not null primary key,
-	invoice_snapshot_id integer not null references invoice_snapshots(id) on delete cascade,
-	item_id text not null references items(id) on delete cascade,
-	quantity integer not null,
-	undiscounted_price numeric not null,
-	discounted_price numeric not null,
-	created_at integer not null default (unixepoch())
+id integer not null primary key,
+invoice_snapshot_id integer not null references invoice_snapshots(id) on delete cascade,
+item_id text not null references items(id) on delete cascade,
+quantity integer not null,
+price_snapshot numeric not null,
+created_at integer not null default (unixepoch())
 );

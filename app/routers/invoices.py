@@ -1,4 +1,4 @@
-import datetime
+from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 from typing import Annotated
 
@@ -12,10 +12,10 @@ from app.services.database import engine
 from ..models import (
     Customers,
     DiscountRecords,
+    DiscountRecordSnapshots,
     Invoices,
     InvoiceSnapshots,
     Items,
-    TransactionDiscountSnapshots,
     TransactionRecords,
     TransactionRecordSnapshots,
 )
@@ -90,10 +90,16 @@ def calculate_discounted_total(transaction_records: list[TransactionRecords]):
     return total
 
 
+def day_start_epoch(d: date, tz=timezone.utc) -> int:
+    return int(datetime.combine(d, time.min, tzinfo=tz).timestamp())
+
+
 @router.get("/")
 def list_invoices(
     session: SessionDep,
     transaction_id_query: str | None = None,
+    from_date: date | None = None,
+    to_date: date | None = None,
     page: Annotated[int, Query(ge=1)] = 1,
     page_size: Annotated[int, Query(ge=1, le=100)] = 10,
 ):
@@ -107,6 +113,14 @@ def list_invoices(
     if transaction_id_query:
         stmt = stmt.where(
             Invoices.transaction_id.contains(transaction_id_query, autoescape=True)
+        )
+
+    if from_date:
+        stmt = stmt.where(Invoices.created_at >= day_start_epoch(from_date))
+
+    if to_date:
+        stmt = stmt.where(
+            Invoices.created_at < day_start_epoch(to_date + timedelta(days=1))
         )
 
     total = session.scalar(select(func.count()).select_from(stmt.subquery()))
@@ -140,18 +154,16 @@ def get_invoice_detail(session: SessionDep, id: int, item_query: str | None = No
         .where(Invoices.id == id)
         .options(
             selectinload(Invoices.transaction_records).options(
-                selectinload(TransactionRecords.transaction_discount_snapshots).options(
-                    selectinload(TransactionDiscountSnapshots.discount_record_snapshots)
-                ),
                 selectinload(TransactionRecords.discount_records),
-                selectinload(TransactionRecords.item)
+                selectinload(TransactionRecords.item),
             ),
             selectinload(Invoices.invoice_snapshots).options(
                 selectinload(InvoiceSnapshots.transaction_record_snapshots).options(
-                    selectinload(TransactionRecordSnapshots.item)
+                    selectinload(TransactionRecordSnapshots.discount_record_snapshots),
+                    selectinload(TransactionRecordSnapshots.item),
                 )
             ),
-            selectinload(Invoices.customer)
+            selectinload(Invoices.customer),
         )
     )
 
@@ -311,19 +323,46 @@ def edit_invoice(session: SessionDep, body: InvoiceEdit):
             "invoice_snapshot_id": invoice_snapshot_id,
             "item_id": record.item_id,
             "quantity": record.quantity,
-            "undiscounted_price": record.price_snapshot,
-            "discounted_price": apply_discount(record),
+            "price_snapshot": record.price_snapshot,
         }
         for record in invoice.transaction_records
     ]
 
-    session.execute(
-        insert(TransactionRecordSnapshots).values(transaction_record_snapshots)
+    inserted_tr_snapshots = (
+        session.execute(
+            insert(TransactionRecordSnapshots)
+            .values(transaction_record_snapshots)
+            .returning(TransactionRecordSnapshots)
+        )
+        .scalars()
+        .all()
     )
+
+    item_discount_map = {
+        transaction.item_id: transaction.discount_records
+        for transaction in invoice.transaction_records
+    }
+
+    discount_record_snapshots = []
+    for snapshot in inserted_tr_snapshots:
+        discounts = item_discount_map[snapshot.item_id]
+        for discount in discounts:
+            discount_record_snapshots.append(
+                {
+                    "transaction_record_snapshot_id": snapshot.id,
+                    "step": discount.step,
+                    "value": discount.value,
+                    "type": discount.type,
+                }
+            )
+    if discount_record_snapshots:
+        session.execute(
+            insert(DiscountRecordSnapshots).values(discount_record_snapshots)
+        )
 
     invoice.transaction_id = body.transaction_id
     invoice.customer_id = body.customer_id
-    invoice.updated_at = datetime.datetime.now().timestamp()
+    invoice.updated_at = datetime.now().timestamp()
     session.commit()
 
     return {"success": f"invoice {body.id} has been updated"}
@@ -332,7 +371,13 @@ def edit_invoice(session: SessionDep, body: InvoiceEdit):
 @router.put("/add-transaction-record-item")
 def add_transaction_record_item(session: SessionDep, body: EditInvoiceAddItem):
     invoice = session.get(
-        Invoices, body.invoice_id, options=[selectinload(Invoices.transaction_records)]
+        Invoices,
+        body.invoice_id,
+        options=[
+            selectinload(Invoices.transaction_records).selectinload(
+                TransactionRecords.discount_records
+            )
+        ],
     )
 
     if invoice is None:
@@ -403,14 +448,42 @@ def add_transaction_record_item(session: SessionDep, body: EditInvoiceAddItem):
             "invoice_snapshot_id": invoice_snapshot_id,
             "item_id": record.item_id,
             "quantity": record.quantity,
-            "undiscounted_price": record.price_snapshot,
-            "discounted_price": apply_discount(record),
+            "price_snapshot": record.price_snapshot,
         }
-        for record in records
+        for record in invoice.transaction_records
     ]
-    if transaction_record_snapshots:
+
+    inserted_tr_snapshots = (
         session.execute(
-            insert(TransactionRecordSnapshots).values(transaction_record_snapshots)
+            insert(TransactionRecordSnapshots)
+            .values(transaction_record_snapshots)
+            .returning(TransactionRecordSnapshots)
+        )
+        .scalars()
+        .all()
+    )
+
+    item_discount_map = {
+        transaction.item_id: transaction.discount_records
+        for transaction in invoice.transaction_records
+    }
+
+    discount_record_snapshots = []
+    for snapshot in inserted_tr_snapshots:
+        discounts = item_discount_map[snapshot.item_id]
+        for discount in discounts:
+            discount_record_snapshots.append(
+                {
+                    "transaction_record_snapshot_id": snapshot.id,
+                    "step": discount.step,
+                    "value": discount.value,
+                    "type": discount.type,
+                }
+            )
+
+    if discount_record_snapshots:
+        session.execute(
+            insert(DiscountRecordSnapshots).values(discount_record_snapshots)
         )
 
     transaction_record_id = session.execute(

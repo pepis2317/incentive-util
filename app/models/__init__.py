@@ -3,11 +3,9 @@ from .models import (
     Customers,
     DiscountRecordSnapshots,
     DiscountRecords,
-    Discounts,
     Invoices,
     InvoiceSnapshots,
     Items,
-    TransactionDiscountSnapshots,
     TransactionRecords,
     TransactionRecordSnapshots,
 )
