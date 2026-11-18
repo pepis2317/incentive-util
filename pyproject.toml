@@ -2,4 +2,12 @@
 name = "incentive-util"
 version = "0.1.0"
 requires-python = ">=3.14"
-dependencies = ["fastapi[standard]", "sqlalchemy"]
+dependencies = ["fastapi[standard]", "sqlalchemy", "sqlacodegen"]
+
+[dependency-groups]
+dev = [
+    "ipykernel>=7.4.0",
+    "jupyterlab>=4.6.6",
+    "openpyxl>=3.1.5",
+    "pandas>=3.1.1",
+]
