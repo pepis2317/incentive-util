@@ -31,18 +31,6 @@ def get_session():
 
 SessionDep = Annotated[Session, Depends(get_session)]
 
-OrderBy = Literal[
-    "id",
-    "name",
-    "type",
-    "brand",
-    "unit",
-    "base_price",
-    "sell_price",
-    "created_at",
-    "updated_at",
-]
-
 
 @router.get("/")
 def list_items(
@@ -75,14 +63,14 @@ def list_items(
 def edit_item(session: SessionDep, body: ItemEditOrAdd):
     item = session.get(Items, body.id)
     if item is None:
-        raise HTTPException(status_code=404, detail=f"Unable to find invoice {id}")
+        raise HTTPException(status_code=404, detail=f"Unable to find item {id}")
     item.name = body.name
     item.type = body.type
     item.brand = body.brand
     item.unit = body.unit
     item.base_price = body.base_price
     item.sell_price = body.sell_price
-    item.updatted_at = datetime.datetime.now().timestamp()
+    item.updated_at = datetime.datetime.now().timestamp()
     session.commit()
 
     return {"success": f"item {body.id} has been updated"}
