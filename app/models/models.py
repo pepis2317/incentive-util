@@ -55,6 +55,7 @@ class Invoices(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     customer_id: Mapped[str] = mapped_column(ForeignKey("customers.id"), nullable=False)
+    type: Mapped[str] = mapped_column(Text, nullable=False)
     transaction_id: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
     created_at: Mapped[int] = mapped_column(
         Integer, nullable=False, server_default=text("unixepoch()")
@@ -84,6 +85,7 @@ class InvoiceSnapshots(Base):
         ForeignKey("invoices.id", ondelete="CASCADE"), nullable=False
     )
     customer_id: Mapped[str] = mapped_column(ForeignKey("customers.id"), nullable=False)
+    type: Mapped[str] = mapped_column(Text, nullable=False)
     transaction_id: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[int] = mapped_column(
         Integer, nullable=False, server_default=text("unixepoch()")
@@ -187,7 +189,8 @@ class DiscountRecordSnapshots(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     transaction_record_snapshot_id: Mapped[int] = mapped_column(
-        ForeignKey("transaction_record_snapshots.id", ondelete="CASCADE"), nullable=False
+        ForeignKey("transaction_record_snapshots.id", ondelete="CASCADE"),
+        nullable=False,
     )
     step: Mapped[int] = mapped_column(Integer, nullable=False)
     value: Mapped[decimal.Decimal] = mapped_column(Numeric, nullable=False)

@@ -1,8 +1,8 @@
 from .models import (
     Base,
     Customers,
-    DiscountRecordSnapshots,
     DiscountRecords,
+    DiscountRecordSnapshots,
     Invoices,
     InvoiceSnapshots,
     Items,

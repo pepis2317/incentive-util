@@ -1,3 +1,5 @@
+import secrets
+import uuid
 from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 from typing import Annotated
@@ -31,7 +33,8 @@ class InvoiceEdit(BaseModel):
 
 class InvoiceAdd(BaseModel):
     customer_id: str
-    transaction_id: str
+    transaction_id: str | None
+    type: str
     items: list[InvoiceAddItem]
 
 
@@ -94,9 +97,16 @@ def day_start_epoch(d: date, tz=timezone.utc) -> int:
     return int(datetime.combine(d, time.min, tzinfo=tz).timestamp())
 
 
+def make_transaction_id() -> str:
+    date = datetime.now(timezone.utc).strftime("%Y%m%d")
+    suffix = secrets.token_hex(3).upper()  # 6 hex chars
+    return f"INV-{date}-{suffix}"  # INV-20261119-A3F9C2
+
+
 @router.get("/")
 def list_invoices(
     session: SessionDep,
+    type: str,
     transaction_id_query: str | None = None,
     from_date: date | None = None,
     to_date: date | None = None,
@@ -109,7 +119,7 @@ def list_invoices(
             selectinload(TransactionRecords.discount_records),
         ),
         selectinload(Invoices.customer),
-    )
+    ).where(Invoices.type==type)
     if transaction_id_query:
         stmt = stmt.where(
             Invoices.transaction_id.contains(transaction_id_query, autoescape=True)
@@ -135,6 +145,7 @@ def list_invoices(
         {
             "id": row.id,
             "transaction_id": row.transaction_id,
+            "type": row.type,
             "customer_name": row.customer.name,
             "undiscounted_total": calculate_undiscounted_total(row.transaction_records),
             "discounted_total": calculate_discounted_total(row.transaction_records),
@@ -251,10 +262,19 @@ def create_invoice(session: SessionDep, body: InvoiceAdd):
                 )
 
             seen.add(key)
+    if body.type != "sell_in" and body.type != "sell_out":
+        raise HTTPException(
+            status_code=400,
+            detail=f"invalid invoice type f{body.type}",
+        )
 
     invoice_id = session.execute(
         insert(Invoices)
-        .values(transaction_id=body.transaction_id, customer_id=body.customer_id)
+        .values(
+            transaction_id=body.transaction_id or make_transaction_id(),
+            customer_id=body.customer_id,
+            type=body.type,
+        )
         .returning(Invoices.id)
     ).scalar_one()
 
@@ -306,7 +326,19 @@ def edit_invoice(session: SessionDep, body: InvoiceEdit):
     )
 
     if invoice is None:
-        raise HTTPException(status_code=404, detail=f"Unable to find invoice {id}")
+        raise HTTPException(status_code=404, detail=f"Unable to find invoice {body.id}")
+
+    existing_transaction = session.execute(
+        select(Invoices.id).where(
+            Invoices.transaction_id == body.transaction_id,
+            Invoices.id != body.id,  # exclude the invoice being updated
+        )
+    ).first()
+
+    if existing_transaction is not None:
+        raise HTTPException(
+            status_code=400, detail=f"Transaction id {body.transaction_id} already exists"
+        )
 
     invoice_snapshot_id = session.execute(
         insert(InvoiceSnapshots)
@@ -314,6 +346,7 @@ def edit_invoice(session: SessionDep, body: InvoiceEdit):
             invoice_id=body.id,
             transaction_id=invoice.transaction_id,
             customer_id=invoice.customer_id,
+            type=invoice.type,
         )
         .returning(InvoiceSnapshots.id)
     ).scalar_one()
@@ -328,37 +361,38 @@ def edit_invoice(session: SessionDep, body: InvoiceEdit):
         for record in invoice.transaction_records
     ]
 
-    inserted_tr_snapshots = (
-        session.execute(
-            insert(TransactionRecordSnapshots)
-            .values(transaction_record_snapshots)
-            .returning(TransactionRecordSnapshots)
-        )
-        .scalars()
-        .all()
-    )
-
-    item_discount_map = {
-        transaction.item_id: transaction.discount_records
-        for transaction in invoice.transaction_records
-    }
-
-    discount_record_snapshots = []
-    for snapshot in inserted_tr_snapshots:
-        discounts = item_discount_map[snapshot.item_id]
-        for discount in discounts:
-            discount_record_snapshots.append(
-                {
-                    "transaction_record_snapshot_id": snapshot.id,
-                    "step": discount.step,
-                    "value": discount.value,
-                    "type": discount.type,
-                }
+    if transaction_record_snapshots:
+        inserted_tr_snapshots = (
+            session.execute(
+                insert(TransactionRecordSnapshots)
+                .values(transaction_record_snapshots)
+                .returning(TransactionRecordSnapshots)
             )
-    if discount_record_snapshots:
-        session.execute(
-            insert(DiscountRecordSnapshots).values(discount_record_snapshots)
+            .scalars()
+            .all()
         )
+
+        item_discount_map = {
+            transaction.item_id: transaction.discount_records
+            for transaction in invoice.transaction_records
+        }
+
+        discount_record_snapshots = []
+        for snapshot in inserted_tr_snapshots:
+            discounts = item_discount_map[snapshot.item_id]
+            for discount in discounts:
+                discount_record_snapshots.append(
+                    {
+                        "transaction_record_snapshot_id": snapshot.id,
+                        "step": discount.step,
+                        "value": discount.value,
+                        "type": discount.type,
+                    }
+                )
+        if discount_record_snapshots:
+            session.execute(
+                insert(DiscountRecordSnapshots).values(discount_record_snapshots)
+            )
 
     invoice.transaction_id = body.transaction_id
     invoice.customer_id = body.customer_id
@@ -385,18 +419,13 @@ def add_transaction_record_item(session: SessionDep, body: EditInvoiceAddItem):
 
     records = invoice.transaction_records
 
-    if not records:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Unable to find any record for invoice {body.invoice_id}",
-        )
-
-    invoice_item_ids = {record.item_id for record in records}
-    if body.item_id in invoice_item_ids:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Invoice already has item {body.item_id}",
-        )
+    if records:
+        invoice_item_ids = {record.item_id for record in records}
+        if body.item_id in invoice_item_ids:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invoice already has item {body.item_id}",
+            )
 
     item_exists = session.execute(
         select(Items).where(Items.id == body.item_id)
@@ -439,6 +468,7 @@ def add_transaction_record_item(session: SessionDep, body: EditInvoiceAddItem):
             invoice_id=body.invoice_id,
             transaction_id=invoice.transaction_id,
             customer_id=invoice.customer_id,
+            type=invoice.type,
         )
         .returning(InvoiceSnapshots.id)
     ).scalar_one()
@@ -453,38 +483,39 @@ def add_transaction_record_item(session: SessionDep, body: EditInvoiceAddItem):
         for record in invoice.transaction_records
     ]
 
-    inserted_tr_snapshots = (
-        session.execute(
-            insert(TransactionRecordSnapshots)
-            .values(transaction_record_snapshots)
-            .returning(TransactionRecordSnapshots)
-        )
-        .scalars()
-        .all()
-    )
-
-    item_discount_map = {
-        transaction.item_id: transaction.discount_records
-        for transaction in invoice.transaction_records
-    }
-
-    discount_record_snapshots = []
-    for snapshot in inserted_tr_snapshots:
-        discounts = item_discount_map[snapshot.item_id]
-        for discount in discounts:
-            discount_record_snapshots.append(
-                {
-                    "transaction_record_snapshot_id": snapshot.id,
-                    "step": discount.step,
-                    "value": discount.value,
-                    "type": discount.type,
-                }
+    if transaction_record_snapshots:
+        inserted_tr_snapshots = (
+            session.execute(
+                insert(TransactionRecordSnapshots)
+                .values(transaction_record_snapshots)
+                .returning(TransactionRecordSnapshots)
             )
-
-    if discount_record_snapshots:
-        session.execute(
-            insert(DiscountRecordSnapshots).values(discount_record_snapshots)
+            .scalars()
+            .all()
         )
+
+        item_discount_map = {
+            transaction.item_id: transaction.discount_records
+            for transaction in invoice.transaction_records
+        }
+
+        discount_record_snapshots = []
+        for snapshot in inserted_tr_snapshots:
+            discounts = item_discount_map[snapshot.item_id]
+            for discount in discounts:
+                discount_record_snapshots.append(
+                    {
+                        "transaction_record_snapshot_id": snapshot.id,
+                        "step": discount.step,
+                        "value": discount.value,
+                        "type": discount.type,
+                    }
+                )
+
+        if discount_record_snapshots:
+            session.execute(
+                insert(DiscountRecordSnapshots).values(discount_record_snapshots)
+            )
 
     transaction_record_id = session.execute(
         insert(TransactionRecords)

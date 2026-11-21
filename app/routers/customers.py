@@ -62,7 +62,7 @@ def add_customer(session: SessionDep, body: CustomerAddOrEdit):
     existing_user = session.get(Customers, body.id)
 
     if existing_user is not None:
-        raise HTTPException(status_code=404, detail=f"{body.id} already exists")
+        raise HTTPException(status_code=400, detail=f"{body.id} already exists")
 
     session.execute(insert(Customers).values(id=body.id, name=body.name))
     session.commit()

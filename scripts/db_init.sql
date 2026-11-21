@@ -3,8 +3,19 @@
 CREATE TABLE customers(
 	id text not null primary key,
 	name text not null,
-	created_at integer not null default (unixepoch()),
-	updated_at integer
+	created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+	updated_at INTEGER
+);
+
+-- discount_record_snapshots definition
+
+CREATE TABLE discount_record_snapshots(
+	id integer not null primary key,
+	transaction_record_snapshot_id integer not null references transaction_record_snapshots(id) on delete cascade,
+	step integer not null,
+	value numeric not null,
+	type text not null,
+	created_at integer not null default (unixepoch())
 );
 
 -- discount_records definition
@@ -15,22 +26,20 @@ CREATE TABLE discount_records(
 	step integer not null,
 	type text not null,
 	value numeric not null,
-	created_at integer not null default (unixepoch()),
-	updated_at integer
+	created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+	updated_at INTEGER,
 	unique(transaction_record_id, step)
 );
 
--- discounts definition
+-- invoice_snapshots definition
 
-CREATE TABLE discounts(
+CREATE TABLE invoice_snapshots(
+	id integer not null primary key,
+	invoice_id integer not null references invoices(id) on delete cascade,
 	customer_id text not null references customers(id) on delete cascade,
-	item_id text not null references items(id) on delete cascade,
-	step integer not null default 1,
 	type text not null,
-	value numeric not null,
-	created_at integer not null default (unixepoch()),
-	updated_at integer
-	primary key (customer_id, item_id, step)
+	transaction_id text not null,
+	created_at integer not null default (unixepoch())
 );
 
 -- invoices definition
@@ -38,9 +47,10 @@ CREATE TABLE discounts(
 CREATE TABLE invoices(
 	id INTEGER PRIMARY KEY NOT NULL,
 	customer_id text not null references customers(id) on delete cascade,
+	type text not null,
 	transaction_id text not null unique,
-	created_at integer not null default (unixepoch()),
-	updated_at integer
+	created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+	updated_at INTEGER
 );
 
 -- items definition
@@ -57,6 +67,17 @@ CREATE TABLE items (
 	updated_at integer
 );
 
+-- transaction_record_snapshots definition
+
+CREATE TABLE transaction_record_snapshots(
+	id integer not null primary key,
+	invoice_snapshot_id integer not null references invoice_snapshots(id) on delete cascade,
+	item_id text not null references items(id) on delete cascade,
+	quantity integer not null,
+	price_snapshot numeric not null,
+	created_at integer not null default (unixepoch())
+);
+
 -- transaction_records definition
 
 CREATE TABLE transaction_records(
@@ -64,39 +85,8 @@ CREATE TABLE transaction_records(
 	invoice_id integer not null references invoices(id) on delete cascade,
 	item_id text not null references items(id) on delete cascade,
 	quantity integer not null,
-	created_at integer not null default (unixepoch()),
-	updated_at integer,
+	price_snapshot numeric not null,
+	created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+	updated_at INTEGER,
 	unique(invoice_id, item_id)
-);
-
--- discount_record_snapshots definition
-
-CREATE TABLE discount_record_snapshots(
-	id integer not null primary key,
-	transaction_record_snapshot_id integer not null references transaction_record_snapshots(id) on delete cascade,
-	step integer not null,
-	value numeric not null,
-	type text not null,
-	created_at integer not null default (unixepoch())
-);
-
--- invoice_snapshots definition
-
-CREATE TABLE invoice_snapshots(
-	id integer not null primary key,
-	invoice_id integer not null references invoices(id) on delete cascade,
-	customer_id text not null references customers(id) on delete cascade,
-	transaction_id text not null,
-	created_at integer not null default (unixepoch())
-);
-
--- transaction_record_snapshots definition
-
-CREATE TABLE transaction_record_snapshots(
-id integer not null primary key,
-invoice_snapshot_id integer not null references invoice_snapshots(id) on delete cascade,
-item_id text not null references items(id) on delete cascade,
-quantity integer not null,
-price_snapshot numeric not null,
-created_at integer not null default (unixepoch())
 );

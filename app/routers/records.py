@@ -106,6 +106,7 @@ def edit_transaction_record(session: SessionDep, body: RecordEditRow):
             invoice_id=record.invoice_id,
             transaction_id=record.invoice.transaction_id,
             customer_id=record.invoice.customer_id,
+            type=record.invoice.type
         )
         .returning(InvoiceSnapshots.id)
     ).scalar_one()
@@ -120,37 +121,38 @@ def edit_transaction_record(session: SessionDep, body: RecordEditRow):
         for rec in record.invoice.transaction_records
     ]
 
-    inserted_tr_snapshots = (
-        session.execute(
-            insert(TransactionRecordSnapshots)
-            .values(transaction_record_snapshots)
-            .returning(TransactionRecordSnapshots)
-        )
-        .scalars()
-        .all()
-    )
-
-    item_discount_map = {
-        transaction.item_id: transaction.discount_records
-        for transaction in record.invoice.transaction_records
-    }
-
-    discount_record_snapshots = []
-    for snapshot in inserted_tr_snapshots:
-        discounts = item_discount_map[snapshot.item_id]
-        for discount in discounts:
-            discount_record_snapshots.append(
-                {
-                    "transaction_record_snapshot_id": snapshot.id,
-                    "step": discount.step,
-                    "value": discount.value,
-                    "type": discount.type,
-                }
+    if transaction_record_snapshots:
+        inserted_tr_snapshots = (
+            session.execute(
+                insert(TransactionRecordSnapshots)
+                .values(transaction_record_snapshots)
+                .returning(TransactionRecordSnapshots)
             )
-    if discount_record_snapshots:
-        session.execute(
-            insert(DiscountRecordSnapshots).values(discount_record_snapshots)
+            .scalars()
+            .all()
         )
+
+        item_discount_map = {
+            transaction.item_id: transaction.discount_records
+            for transaction in record.invoice.transaction_records
+        }
+
+        discount_record_snapshots = []
+        for snapshot in inserted_tr_snapshots:
+            discounts = item_discount_map[snapshot.item_id]
+            for discount in discounts:
+                discount_record_snapshots.append(
+                    {
+                        "transaction_record_snapshot_id": snapshot.id,
+                        "step": discount.step,
+                        "value": discount.value,
+                        "type": discount.type,
+                    }
+                )
+        if discount_record_snapshots:
+            session.execute(
+                insert(DiscountRecordSnapshots).values(discount_record_snapshots)
+            )
 
     record.quantity = body.quantity
     record.item_id = body.item_id
@@ -226,6 +228,7 @@ def delete_transaction_record_row(session: SessionDep, id: int):
             invoice_id=record.invoice_id,
             transaction_id=record.invoice.transaction_id,
             customer_id=record.invoice.customer_id,
+            type=record.invoice.type
         )
         .returning(InvoiceSnapshots.id)
     ).scalar_one()
@@ -239,38 +242,38 @@ def delete_transaction_record_row(session: SessionDep, id: int):
         }
         for record in record.invoice.transaction_records
     ]
-
-    inserted_tr_snapshots = (
-        session.execute(
-            insert(TransactionRecordSnapshots)
-            .values(transaction_record_snapshots)
-            .returning(TransactionRecordSnapshots)
-        )
-        .scalars()
-        .all()
-    )
-
-    item_discount_map = {
-        transaction.item_id: transaction.discount_records
-        for transaction in record.invoice.transaction_records
-    }
-
-    discount_record_snapshots = []
-    for snapshot in inserted_tr_snapshots:
-        discounts = item_discount_map[snapshot.item_id]
-        for discount in discounts:
-            discount_record_snapshots.append(
-                {
-                    "transaction_record_snapshot_id": snapshot.id,
-                    "step": discount.step,
-                    "value": discount.value,
-                    "type": discount.type,
-                }
+    if transaction_record_snapshots:
+        inserted_tr_snapshots = (
+            session.execute(
+                insert(TransactionRecordSnapshots)
+                .values(transaction_record_snapshots)
+                .returning(TransactionRecordSnapshots)
             )
-    if discount_record_snapshots:
-        session.execute(
-            insert(DiscountRecordSnapshots).values(discount_record_snapshots)
+            .scalars()
+            .all()
         )
+
+        item_discount_map = {
+            transaction.item_id: transaction.discount_records
+            for transaction in record.invoice.transaction_records
+        }
+
+        discount_record_snapshots = []
+        for snapshot in inserted_tr_snapshots:
+            discounts = item_discount_map[snapshot.item_id]
+            for discount in discounts:
+                discount_record_snapshots.append(
+                    {
+                        "transaction_record_snapshot_id": snapshot.id,
+                        "step": discount.step,
+                        "value": discount.value,
+                        "type": discount.type,
+                    }
+                )
+        if discount_record_snapshots:
+            session.execute(
+                insert(DiscountRecordSnapshots).values(discount_record_snapshots)
+            )
 
     session.delete(record)
     session.commit()

@@ -83,9 +83,7 @@ def add_item(session: SessionDep, body: ItemEditOrAdd):
     ).scalar_one_or_none()
 
     if existing:
-        raise HTTPException(
-            status_code=400, detail=f"Items with id {body.id} exists"
-        )
+        raise HTTPException(status_code=400, detail=f"Items with id {body.id} exists")
 
     session.execute(
         insert(Items).values(
@@ -95,12 +93,12 @@ def add_item(session: SessionDep, body: ItemEditOrAdd):
             brand=body.brand,
             unit=body.unit,
             base_price=body.base_price,
-            sell_price=body.sell_price
+            sell_price=body.sell_price,
         )
     )
     session.commit()
     return {"success": f"added new item {body.id}"}
-    
+
 
 @router.delete("/")
 def delete_item(session: SessionDep, id: int):

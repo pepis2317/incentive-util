@@ -72,17 +72,25 @@ def get_home_data(session: SessionDep):
         invoices_stmt.order_by(Invoices.created_at.desc(), Invoices.id)
     ).all()
 
-    total_amount = 0
-    total_quantity = 0
-    total_invoices = 0
+    sell_out_rows = []
+    sell_in_rows = []
+    for r in rows:
+        if r.type == "sell_out":
+            sell_out_rows.append(r)
+        else:
+            sell_in_rows.append(r)
 
-    for row in rows:
-        total_invoices += 1
-        total_amount += calculate_discounted_total(row.transaction_records)
-        total_quantity += sum(record.quantity for record in row.transaction_records)
+    total_sell_out_amount = 0
+
+    for row in sell_out_rows:
+        total_sell_out_amount += calculate_discounted_total(row.transaction_records)
+
+    total_sell_in_amount = 0
+
+    for row in sell_in_rows:
+        total_sell_in_amount += calculate_discounted_total(row.transaction_records)
 
     return {
-        "total_amount": total_amount,
-        "total_quantity": total_quantity,
-        "total_invoices": total_invoices,
+        "total_sell_out_amount": total_sell_out_amount,
+        "total_sell_in_amount": total_sell_in_amount,
     }
