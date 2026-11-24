@@ -42,7 +42,9 @@ MAX_CACHE_SIZE = 100
 customers_cache: OrderedDict[CustomersCacheQuery, dict] = OrderedDict()
 
 
-def update_customers_cache(query: CustomersCacheQuery, customers: list[Customers], total: int):
+def update_customers_cache(
+    query: CustomersCacheQuery, customers: list[Customers], total: int
+):
     if len(customers_cache) >= MAX_CACHE_SIZE:
         customers_cache.popitem(last=False)
     customers_cache[query] = {"customers": customers, "total": total}
@@ -53,7 +55,11 @@ def get_customers_cache(query: CustomersCacheQuery):
     if cached is None:
         return None
     customers_cache.move_to_end(query)
-    return {"customers": cached["customers"], "total": cached["total"], "page": query.page}
+    return {
+        "customers": cached["customers"],
+        "total": cached["total"],
+        "page": query.page,
+    }
 
 
 @router.get("/")
@@ -63,7 +69,9 @@ def list_customers(
     page: Annotated[int, Query(ge=1)] = 1,
     page_size: Annotated[int, Query(ge=1, le=100)] = 10,
 ):
-    query = CustomersCacheQuery(customer_query=customer_query, page=page, page_size=page_size)
+    query = CustomersCacheQuery(
+        customer_query=customer_query or "", page=page, page_size=page_size
+    )
     cached = get_customers_cache(query)
     if cached is not None:
         return cached

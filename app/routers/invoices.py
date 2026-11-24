@@ -77,7 +77,9 @@ MAX_CACHE_SIZE = 100
 invoices_cache: OrderedDict[InvoicesCacheQuery, dict] = OrderedDict()
 
 
-def update_invoices_cache(query: InvoicesCacheQuery, invoices: list[Invoices], total: int):
+def update_invoices_cache(
+    query: InvoicesCacheQuery, invoices: list[Invoices], total: int
+):
     if len(invoices_cache) >= MAX_CACHE_SIZE:
         invoices_cache.popitem(last=False)
     invoices_cache[query] = {"invoices": invoices, "total": total}
@@ -88,7 +90,11 @@ def get_invoices_cache(query: InvoicesCacheQuery):
     if cached is None:
         return None
     invoices_cache.move_to_end(query)
-    return {"invoices": cached["invoices"], "total": cached["total"], "page": query.page}
+    return {
+        "invoices": cached["invoices"],
+        "total": cached["total"],
+        "page": query.page,
+    }
 
 
 def calculate_undiscounted_total(transaction_records: list[TransactionRecords]):
@@ -137,7 +143,9 @@ def list_invoices(
     page: Annotated[int, Query(ge=1)] = 1,
     page_size: Annotated[int, Query(ge=1, le=100)] = 10,
 ):
-    query = InvoicesCacheQuery(transaction_id_query=transaction_id_query, page=page, page_size=page_size)
+    query = InvoicesCacheQuery(
+        transaction_id_query=transaction_id_query or "", page=page, page_size=page_size
+    )
     cached = get_invoices_cache(query)
     if cached is not None:
         return cached

@@ -64,7 +64,7 @@ def list_items(
     page: Annotated[int, Query(ge=1)] = 1,
     page_size: Annotated[int, Query(ge=1, le=100)] = 10,
 ):
-    query = ItemsCacheQuery(item_query=item_query, page=page, page_size=page_size)
+    query = ItemsCacheQuery(item_query=item_query or "", page=page, page_size=page_size)
     cached = get_items_cache(query)
     if cached is not None:
         return cached
