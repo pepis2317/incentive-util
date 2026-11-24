@@ -77,7 +77,7 @@ MAX_CACHE_SIZE = 100
 invoices_cache: OrderedDict[InvoicesCacheQuery, dict] = OrderedDict()
 
 
-def update_invoices_cache(query: InvoicesCacheQuery, invoices: list[Items], total: int):
+def update_invoices_cache(query: InvoicesCacheQuery, invoices: list[Invoices], total: int):
     if len(invoices_cache) >= MAX_CACHE_SIZE:
         invoices_cache.popitem(last=False)
     invoices_cache[query] = {"invoices": invoices, "total": total}
