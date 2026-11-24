@@ -1,11 +1,11 @@
 import secrets
-import uuid
+from collections import OrderedDict
 from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy import func, insert, or_, select
 from sqlalchemy.orm import Session, selectinload
 
@@ -59,12 +59,36 @@ class EditInvoiceAddItem(BaseModel):
     discounts: list[ItemDiscount]
 
 
+class InvoicesCacheQuery(BaseModel):
+    model_config = ConfigDict(frozen=True)
+    transaction_id_query: str
+    page: int
+    page_size: int
+
+
 def get_session():
     with Session(engine) as session:
         yield session
 
 
 SessionDep = Annotated[Session, Depends(get_session)]
+
+MAX_CACHE_SIZE = 100
+invoices_cache: OrderedDict[InvoicesCacheQuery, dict] = OrderedDict()
+
+
+def update_invoices_cache(query: InvoicesCacheQuery, invoices: list[Items], total: int):
+    if len(invoices_cache) >= MAX_CACHE_SIZE:
+        invoices_cache.popitem(last=False)
+    invoices_cache[query] = {"invoices": invoices, "total": total}
+
+
+def get_invoices_cache(query: InvoicesCacheQuery):
+    cached = invoices_cache.get(query)
+    if cached is None:
+        return None
+    invoices_cache.move_to_end(query)
+    return {"invoices": cached["invoices"], "total": cached["total"], "page": query.page}
 
 
 def calculate_undiscounted_total(transaction_records: list[TransactionRecords]):
@@ -113,13 +137,22 @@ def list_invoices(
     page: Annotated[int, Query(ge=1)] = 1,
     page_size: Annotated[int, Query(ge=1, le=100)] = 10,
 ):
-    stmt = select(Invoices).options(
-        selectinload(Invoices.transaction_records).options(
-            selectinload(TransactionRecords.item),
-            selectinload(TransactionRecords.discount_records),
-        ),
-        selectinload(Invoices.customer),
-    ).where(Invoices.type==type)
+    query = InvoicesCacheQuery(transaction_id_query=transaction_id_query, page=page, page_size=page_size)
+    cached = get_invoices_cache(query)
+    if cached is not None:
+        return cached
+
+    stmt = (
+        select(Invoices)
+        .options(
+            selectinload(Invoices.transaction_records).options(
+                selectinload(TransactionRecords.item),
+                selectinload(TransactionRecords.discount_records),
+            ),
+            selectinload(Invoices.customer),
+        )
+        .where(Invoices.type == type)
+    )
     if transaction_id_query:
         stmt = stmt.where(
             Invoices.transaction_id.contains(transaction_id_query, autoescape=True)
@@ -154,7 +187,7 @@ def list_invoices(
         }
         for row in rows
     ]
-
+    update_invoices_cache(query, invoices, total)
     return {"invoices": invoices, "total": total, "page": page}
 
 
@@ -310,6 +343,7 @@ def create_invoice(session: SessionDep, body: InvoiceAdd):
         session.execute(insert(DiscountRecords).values(discounts_to_insert))
 
     session.commit()
+    invoices_cache.clear()
     return {"success": "invoice created"}
 
 
@@ -337,7 +371,8 @@ def edit_invoice(session: SessionDep, body: InvoiceEdit):
 
     if existing_transaction is not None:
         raise HTTPException(
-            status_code=400, detail=f"Transaction id {body.transaction_id} already exists"
+            status_code=400,
+            detail=f"Transaction id {body.transaction_id} already exists",
         )
 
     invoice_snapshot_id = session.execute(
@@ -399,6 +434,7 @@ def edit_invoice(session: SessionDep, body: InvoiceEdit):
     invoice.updated_at = datetime.now().timestamp()
     session.commit()
 
+    invoices_cache.clear()
     return {"success": f"invoice {body.id} has been updated"}
 
 
@@ -543,6 +579,7 @@ def add_transaction_record_item(session: SessionDep, body: EditInvoiceAddItem):
 
     session.commit()
 
+    invoices_cache.clear()
     return {"success": f"added new record for invoice {body.invoice_id}"}
 
 
@@ -554,4 +591,5 @@ def delete_invoice(session: SessionDep, id: int):
     session.delete(invoice)
     session.commit()
 
+    invoices_cache.clear()
     return {"success": f"invoice {id} has been deleted"}

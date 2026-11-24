@@ -1,9 +1,10 @@
 import datetime
+from collections import OrderedDict
 from decimal import Decimal
-from typing import Annotated, Literal
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy import func, insert, or_, select
 from sqlalchemy.orm import Session
 
@@ -24,12 +25,36 @@ class ItemEditOrAdd(BaseModel):
     sell_price: Decimal
 
 
+class ItemsCacheQuery(BaseModel):
+    model_config = ConfigDict(frozen=True)
+    item_query: str
+    page: int
+    page_size: int
+
+
 def get_session():
     with Session(engine) as session:
         yield session
 
 
 SessionDep = Annotated[Session, Depends(get_session)]
+
+MAX_CACHE_SIZE = 100
+items_cache: OrderedDict[ItemsCacheQuery, dict] = OrderedDict()
+
+
+def update_items_cache(query: ItemsCacheQuery, items: list[Items], total: int):
+    if len(items_cache) >= MAX_CACHE_SIZE:
+        items_cache.popitem(last=False)
+    items_cache[query] = {"items": items, "total": total}
+
+
+def get_items_cache(query: ItemsCacheQuery):
+    cached = items_cache.get(query)
+    if cached is None:
+        return None
+    items_cache.move_to_end(query)
+    return {"items": cached["items"], "total": cached["total"], "page": query.page}
 
 
 @router.get("/")
@@ -39,6 +64,11 @@ def list_items(
     page: Annotated[int, Query(ge=1)] = 1,
     page_size: Annotated[int, Query(ge=1, le=100)] = 10,
 ):
+    query = ItemsCacheQuery(item_query=item_query, page=page, page_size=page_size)
+    cached = get_items_cache(query)
+    if cached is not None:
+        return cached
+
     stmt = select(Items)
     if item_query:
         stmt = stmt.where(
@@ -55,6 +85,7 @@ def list_items(
         .offset((page - 1) * page_size)
         .limit(page_size)
     ).all()
+    update_items_cache(query, items, total)
 
     return {"items": items, "total": total, "page": page}
 
@@ -72,7 +103,8 @@ def edit_item(session: SessionDep, body: ItemEditOrAdd):
     item.sell_price = body.sell_price
     item.updated_at = datetime.datetime.now().timestamp()
     session.commit()
-
+    
+    items_cache.clear()
     return {"success": f"item {body.id} has been updated"}
 
 
@@ -97,6 +129,7 @@ def add_item(session: SessionDep, body: ItemEditOrAdd):
         )
     )
     session.commit()
+    items_cache.clear()
     return {"success": f"added new item {body.id}"}
 
 
@@ -108,4 +141,5 @@ def delete_item(session: SessionDep, id: int):
     session.delete(item)
     session.commit()
 
+    items_cache.clear()
     return {"success": f"invoice {id} has been deleted"}
